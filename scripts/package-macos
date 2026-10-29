@@ -1,0 +1,115 @@
+#!/bin/zsh
+# Aether — developed by Ambarish Mallick. Copyright (c) 2026 Ambarish Mallick. SPDX-License-Identifier: MIT
+# Builds the single-file installer: dist/Aether-<version>.dmg
+#   a universal, hardened Aether.app + an Applications shortcut, styled window.
+#
+#   AETHER_SIGN_IDENTITY   "Developer ID Application: …" (default "-": ad-hoc)
+#   AETHER_NOTARY_PROFILE  keychain profile from `xcrun notarytool store-credentials`;
+#                          when set (with a Developer ID), the DMG is notarized and stapled.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT=$PWD
+VERSION=$(tr -d '[:space:]' < VERSION)
+IDENTITY=${AETHER_SIGN_IDENTITY:--}
+SIGNED=$([[ $IDENTITY == "-" ]] && echo 0 || echo 1)
+VOLNAME="Aether"
+WORK="$ROOT/.build/dmg"
+STAGE="$WORK/stage"
+OUT="$ROOT/dist/Aether-$VERSION.dmg"
+
+if [[ $SIGNED == 1 ]]; then
+  security find-identity -v -p codesigning | grep -qF "$IDENTITY" || {
+    echo "Signing identity not found in the keychain: $IDENTITY" >&2
+    echo "Installed identities:" >&2; security find-identity -v -p codesigning >&2; exit 1; }
+fi
+
+# Submits a file to Apple's notary service and fails unless it is accepted.
+notarize() {
+  local file=$1 json="$WORK/notary-$(basename "$1").json"
+  echo "Notarizing $(basename "$file")…"
+  xcrun notarytool submit "$file" --keychain-profile "$AETHER_NOTARY_PROFILE" --wait --output-format json > "$json" || true
+  local notary_status id
+  notary_status=$(plutil -extract status raw -o - "$json" 2>/dev/null || echo unknown)
+  id=$(plutil -extract id raw -o - "$json" 2>/dev/null || echo "")
+  if [[ $notary_status != Accepted ]]; then
+    echo "Notarization failed ($notary_status). Apple's log:" >&2
+    [[ -n $id ]] && xcrun notarytool log "$id" --keychain-profile "$AETHER_NOTARY_PROFILE" >&2
+    exit 1
+  fi
+  echo "Accepted ($id)"
+}
+
+./scripts/build-macos
+mkdir -p "$WORK"
+
+# Notarize and staple the app itself, so a copy dragged out of the image also opens
+# offline without a Gatekeeper prompt. The image is notarized again below.
+if [[ $SIGNED == 1 && -n ${AETHER_NOTARY_PROFILE:-} ]]; then
+  ditto -c -k --keepParent "$ROOT/dist/Aether.app" "$WORK/Aether.zip"
+  notarize "$WORK/Aether.zip"
+  xcrun stapler staple "$ROOT/dist/Aether.app"
+fi
+
+rm -rf "$STAGE" "$WORK/rw.dmg" && mkdir -p "$STAGE/.background"
+ditto "$ROOT/dist/Aether.app" "$STAGE/Aether.app"
+ln -s /Applications "$STAGE/Applications"
+
+# Window background (1× + 2× in one TIFF)
+swift scripts/make-dmg-background.swift "$WORK/bg.png" 1 "$VERSION" "$SIGNED"
+swift scripts/make-dmg-background.swift "$WORK/bg@2x.png" 2 "$VERSION" "$SIGNED"
+tiffutil -cathidpicheck "$WORK/bg.png" "$WORK/bg@2x.png" -out "$STAGE/.background/background.tiff" >/dev/null
+
+# Writable image → lay out the window in Finder → compressed read-only image
+if hdiutil info | grep -q "/Volumes/$VOLNAME\$"; then
+  echo "A volume named $VOLNAME is already mounted; eject it first." >&2; exit 1
+fi
+hdiutil create -quiet -srcfolder "$STAGE" -volname "$VOLNAME" -fs HFS+ -format UDRW -ov "$WORK/rw.dmg"
+DEV=$(hdiutil attach -readwrite -noverify -noautoopen "$WORK/rw.dmg" | awk '/Apple_HFS/ {print $1}')
+MNT="/Volumes/$VOLNAME"
+if ! timeout 90 osascript <<APPLESCRIPT
+tell application "Finder"
+  tell disk "$VOLNAME"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set bounds of container window to {200, 120, 860, 568}
+    set opts to icon view options of container window
+    set arrangement of opts to not arranged
+    set icon size of opts to 112
+    set text size of opts to 13
+    set background picture of opts to file ".background:background.tiff"
+    set position of item "Aether.app" of container window to {180, 205}
+    set position of item "Applications" of container window to {480, 205}
+    update without registering applications
+    delay 1
+    close
+  end tell
+end tell
+APPLESCRIPT
+then
+  echo "warning: Finder layout could not be applied (Automation permission?); the image still works." >&2
+fi
+# Volume icon, added after the Finder pass (Finder resets it): hdiutil -srcfolder skips
+# .VolumeIcon.icns, so it goes straight into the mounted image.
+cp "$ROOT/dist/Aether.app/Contents/Resources/Aether.icns" "$MNT/.VolumeIcon.icns"
+SetFile -a C "$MNT"
+sync
+rm -rf "$MNT/.fseventsd" "$MNT/.Trashes" 2>/dev/null || true
+hdiutil detach -quiet "$DEV" || hdiutil detach -force -quiet "$DEV"
+rm -f "$OUT"
+hdiutil convert -quiet "$WORK/rw.dmg" -format ULFO -o "$OUT"
+
+if [[ $SIGNED == 1 ]]; then
+  codesign --force --sign "$IDENTITY" --timestamp "$OUT"
+  if [[ -n ${AETHER_NOTARY_PROFILE:-} ]]; then
+    notarize "$OUT"
+    xcrun stapler staple "$OUT"
+    xcrun stapler validate "$OUT"
+    spctl -a -t open --context context:primary-signature -v "$OUT"
+  fi
+fi
+
+hdiutil verify -quiet "$OUT"
+shasum -a 256 "$OUT" | tee "$OUT.sha256"
+echo "Packaged $OUT ($(du -h "$OUT" | cut -f1 | tr -d ' '), signed: $IDENTITY)"

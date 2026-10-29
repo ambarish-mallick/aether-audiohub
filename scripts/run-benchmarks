@@ -1,0 +1,9 @@
+#!/bin/zsh
+# Aether — developed by Ambarish Mallick. Copyright (c) 2026 Ambarish Mallick. SPDX-License-Identifier: MIT
+# CPU cost of the DSP core on this machine (machine details printed first).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null
+cmake --build build -j --target aether-bench >/dev/null
+echo "$(sysctl -n machdep.cpu.brand_string) · macOS $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+./build/aether-bench

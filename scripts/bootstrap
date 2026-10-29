@@ -1,0 +1,14 @@
+#!/bin/zsh
+# Aether — developed by Ambarish Mallick. Copyright (c) 2026 Ambarish Mallick. SPDX-License-Identifier: MIT
+# Verifies the toolchain. Makes no global changes.
+set -uo pipefail
+ok=1
+check() { if command -v "$1" >/dev/null 2>&1; then echo "✓ $1: $("$1" --version 2>&1 | head -1)"; else echo "✗ $1 missing — $2"; ok=0; fi }
+check clang++ "install Command Line Tools: xcode-select --install"
+check swift "install Command Line Tools or Xcode"
+check cmake "install CMake 3.20+ (e.g. brew install cmake)"
+macos=$(sw_vers -productVersion)
+echo "macOS $macos"
+autoload is-at-least
+is-at-least 14.4 "$macos" || { echo "✗ macOS 14.4 or later is required for process taps"; ok=0; }
+[[ $ok == 1 ]] && echo "Toolchain OK" || exit 1

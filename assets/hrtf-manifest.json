@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "spatial_model": {
+    "id": "aether-structural-hrtf-v1",
+    "type": "analytic",
+    "description": "Structural spherical-head HRTF: head-shadow one-pole/one-zero filter, Woodworth-style ITD, tempered pinna-echo model, diffuse-field equalised. Computed at run time; no measured data is bundled.",
+    "reference": "C. P. Brown and R. O. Duda, 'A structural model for binaural sound synthesis', IEEE Trans. Speech and Audio Processing 6(5), 1998.",
+    "parameters": {
+      "head_radius_m": 0.0875,
+      "speed_of_sound_m_s": 343.0,
+      "ear_azimuth_deg": 100.0,
+      "alpha_min": 0.1,
+      "theta_min_deg": 150.0,
+      "pinna_depth": 0.35,
+      "pinna_rho": [0.5, -1.0, 0.5, -0.25, 0.25],
+      "pinna_A_samples_44k1": [1, 5, 5, 5, 5],
+      "pinna_B_samples_44k1": [2, 4, 7, 11, 13],
+      "pinna_D": [1, 0.5, 0.5, 0.5, 0.5]
+    },
+    "coordinate_convention": "azimuth clockwise from front (right positive), elevation up positive, listener-centred",
+    "normalisation": "diffuse-field EQ (cos-elevation weighted, 1/3-octave smoothed, ±10 dB) plus the K-weighted loudness convention in docs/dsp-math.md",
+    "license": "Original implementation, part of Aether by Ambarish Mallick. No third-party dataset; no redistribution restrictions from measured data.",
+    "sha256": null
+  },
+  "measured_datasets": []
+}
